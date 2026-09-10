@@ -25,6 +25,7 @@ class DiscoveryTests(unittest.TestCase):
     def test_discovers_mihoyo(self) -> None:
         names = {entry.function.__name__ for entry in main.discover_signers()}
         self.assertIn("sign_mihoyo", names)
+        self.assertIn("sign_aivalux", names)
 
     def test_bad_signer_is_isolated(self) -> None:
         def sign_broken():
