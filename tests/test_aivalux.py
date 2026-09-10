@@ -257,5 +257,28 @@ class AivaluxTests(unittest.TestCase):
         self.assertIn("请重新登录并更新 GitHub Secrets", message)
 
 
+    @patch.dict(os.environ, {
+        "AIVALUX_USERNAME": "alias@example.com",
+        "AIVALUX_PASSWORD": "password-secret",
+    }, clear=True)
+    @patch("signers.aivalux._request")
+    @patch("signers.aivalux.requests.Session")
+    def test_username_secret_is_accepted_as_email_alias(
+        self, _session_factory: Mock, request: Mock
+    ) -> None:
+        def status(_session: Mock, tokens: AuthTokens, *args, **kwargs) -> dict:
+            self.assertEqual(tokens.email, "alias@example.com")
+            return {
+                "ok": True,
+                "data": {
+                    "today": {"checked_in": True},
+                    "red_packet": {"claimed": False, "can_claim": False, "phase": "closed"},
+                },
+            }
+        request.side_effect = status
+        success, _message = sign_aivalux()
+        self.assertTrue(success)
+
+
 if __name__ == "__main__":
     unittest.main()

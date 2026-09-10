@@ -248,7 +248,8 @@ def sign_aivalux() -> tuple[bool, str]:
 
     access_token = os.getenv("AIVALUX_ACCESS_TOKEN", "").strip()
     refresh_token = os.getenv("AIVALUX_REFRESH_TOKEN", "").strip()
-    email = os.getenv("AIVALUX_EMAIL", "").strip()
+    email = (os.getenv("AIVALUX_EMAIL", "").strip()
+             or os.getenv("AIVALUX_USERNAME", "").strip())
     password = os.getenv("AIVALUX_PASSWORD", "").strip()
     cookie = os.getenv("AIVALUX_COOKIE", "").strip()
     if bool(email) != bool(password):
