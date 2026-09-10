@@ -8,10 +8,12 @@ import requests
 
 from signers.aivalux import (
     CHECKIN_URL,
+    LOGIN_URL,
     RED_PACKET_URL,
     STATUS_URL,
     AivaluxError,
     AuthTokens,
+    _login,
     _refresh_access_token,
     _request,
     _safe_request_error,
@@ -29,7 +31,7 @@ def response(status: int, payload: dict) -> Mock:
 class AivaluxTests(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_tokens_is_safe_skip(self) -> None:
-        self.assertEqual(sign_aivalux(), (True, "未配置 Aivalux Token，已跳过"))
+        self.assertEqual(sign_aivalux(), (True, "未配置 Aivalux 凭据，已跳过"))
 
     @patch.dict(os.environ, {"AIVALUX_ACCESS_TOKEN": "access-token-value"}, clear=True)
     @patch("signers.aivalux.requests.Session")
@@ -55,6 +57,56 @@ class AivaluxTests(unittest.TestCase):
         self.assertEqual(session.request.call_args_list[1].args[:2], ("POST", RED_PACKET_URL))
         self.assertEqual(session.request.call_args_list[1].kwargs["json"], {})
         self.assertNotIn(CHECKIN_URL, [call.args[1] for call in session.request.call_args_list])
+
+    @patch.dict(os.environ, {"AIVALUX_EMAIL": "only-email"}, clear=True)
+    def test_partial_login_credentials_fail_safely(self) -> None:
+        success, message = sign_aivalux()
+        self.assertFalse(success)
+        self.assertIn("必须同时配置", message)
+
+    def test_login_uses_exact_payload_and_stores_tokens(self) -> None:
+        session = Mock()
+        session.post.return_value = response(200, {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 86400,
+            },
+        })
+        tokens = AuthTokens("", "", "user@example.com", "password-secret")
+
+        _login(session, tokens)
+
+        self.assertEqual(session.post.call_args.args[0], LOGIN_URL)
+        self.assertEqual(session.post.call_args.kwargs["json"], {
+            "email": "user@example.com",
+            "password": "password-secret",
+        })
+        self.assertEqual(tokens.access_token, "new-access-token")
+        self.assertEqual(tokens.refresh_token, "new-refresh-token")
+        self.assertTrue(tokens.logged_in)
+
+    def test_request_logs_in_when_tokens_are_missing(self) -> None:
+        session = Mock()
+        session.post.return_value = response(200, {
+            "code": 0,
+            "data": {
+                "access_token": "login-access-token",
+                "refresh_token": "login-refresh-token",
+            },
+        })
+        session.request.return_value = response(200, {"ok": True, "data": {}})
+        tokens = AuthTokens("", "", "user@example.com", "password-secret")
+
+        payload = _request(session, tokens, "GET", STATUS_URL)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            session.request.call_args.kwargs["headers"]["Authorization"],
+            "Bearer login-access-token",
+        )
 
     @patch.dict(os.environ, {"AIVALUX_ACCESS_TOKEN": "access-token-value"}, clear=True)
     @patch("signers.aivalux.requests.Session")
@@ -161,6 +213,48 @@ class AivaluxTests(unittest.TestCase):
         detail = str(caught.exception)
         self.assertNotIn("access-secret", detail)
         self.assertNotIn("cookie-secret", detail)
+
+
+    def _rotated_status(self, _session: Mock, tokens: AuthTokens, *args, **kwargs) -> dict:
+        tokens.refreshed = True
+        tokens.refresh_token_rotated = True
+        return {
+            "ok": True,
+            "data": {
+                "today": {"checked_in": True},
+                "red_packet": {"claimed": False, "can_claim": False, "phase": "closed"},
+            },
+        }
+
+    @patch.dict(os.environ, {
+        "AIVALUX_ACCESS_TOKEN": "access-token",
+        "AIVALUX_REFRESH_TOKEN": "old-refresh",
+        "AIVALUX_EMAIL": "user@example.com",
+        "AIVALUX_PASSWORD": "password-secret",
+    }, clear=True)
+    @patch("signers.aivalux._request")
+    @patch("signers.aivalux.requests.Session")
+    def test_rotation_with_login_fallback_remains_successful(
+        self, _session_factory: Mock, request: Mock
+    ) -> None:
+        request.side_effect = self._rotated_status
+        success, message = sign_aivalux()
+        self.assertTrue(success)
+        self.assertNotIn("请重新登录", message)
+
+    @patch.dict(os.environ, {
+        "AIVALUX_ACCESS_TOKEN": "access-token",
+        "AIVALUX_REFRESH_TOKEN": "old-refresh",
+    }, clear=True)
+    @patch("signers.aivalux._request")
+    @patch("signers.aivalux.requests.Session")
+    def test_rotation_without_login_fallback_requires_secret_update(
+        self, _session_factory: Mock, request: Mock
+    ) -> None:
+        request.side_effect = self._rotated_status
+        success, message = sign_aivalux()
+        self.assertFalse(success)
+        self.assertIn("请重新登录并更新 GitHub Secrets", message)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,6 @@
 ├── signers/
 │   ├── __init__.py
 │   ├── base.py                    # 日志、账号配置、PushPlus 等公共工具
-│   ├── aivalux.py                 # Aivalux 签到与可领取红包
 │   └── mihoyo.py                  # 米游社原神、星铁、绝区零国服签到
 ├── tests/                         # 不访问网络的基础测试
 ├── requirements.txt               # 锁定依赖版本
@@ -54,9 +53,6 @@ Fork 本仓库，或将这些文件提交到你自己的 GitHub 仓库。请勿�
 | --- | --- | --- |
 | `PUSHPLUS_TOKEN` | PushPlus Token | 是 |
 | `COOKIE_MIHOYO` | 单个米游社账号 Cookie；自动识别原神、星铁和绝区零 | 米游社签到必填；使用 JSON 配置时可不填 |
-| `AIVALUX_ACCESS_TOKEN` | Aivalux 登录后的 Access Token | Aivalux 推荐 |
-| `AIVALUX_REFRESH_TOKEN` | Aivalux Refresh Token，用于 Access Token 过期后刷新 | Aivalux 推荐 |
-| `AIVALUX_COOKIE` | Aivalux 登录 Cookie，只有接口额外校验时才需要 | 可选 |
 | `COOKIES_JSON` | 按网站批量配置 Cookie | 可选 |
 | `ACCOUNTS_JSON` | 带账号名称的进阶配置 | 可选 |
 
@@ -152,12 +148,6 @@ python main.py
 
 米游社接口和风控策略可能变化。如果返回验证码、风控或接口不兼容提示，脚本不会尝试绕过验证；请先在官方客户端完成必要验证，再更新 Cookie 或接口配置。
 
-## Aivalux 签到与红包
-
-`signers/aivalux.py` 会先读取 `/qiandao/api/status`：若今天尚未签到，则调用 `POST /qiandao/api/check-in`；随后仅在 `red_packet.can_claim=true` 时调用 `POST /qiandao/api/red-packet/claim`。红包已领取、未开放或已抢完都不会重复请求。脚本不会执行抽奖、补签、兑换、周礼包，也不会消费积分、余额或抽奖卡。
-
-获取凭据时，在已登录的 Aivalux 页面按 `F12`，进入 `应用/Application` → `本地存储/Local Storage` → `https://www.aivalux.com`，将 `auth_token` 和 `refresh_token` 的值分别直接保存为 GitHub Secrets：`AIVALUX_ACCESS_TOKEN`、`AIVALUX_REFRESH_TOKEN`。不要把值发到聊天、Issue 或提交到仓库。若尚未配置 Token，Aivalux 签到器会安全跳过，不影响其他站点。Access Token 过期后，脚本可在当次运行中使用 Refresh Token 自动刷新；GitHub Actions 无法安全回写新的 Secret。如果服务返回了轮换后的 Refresh Token，任务会在签到完成后标记失败并通过通知提示你重新登录、更新两个 Secrets，任何新 Token 都不会写入日志或仓库。
-
 ## 添加新网站
 
 在 `signers/` 下新建一个 `.py` 文件，例如 `signers/example.py`。函数名必须以 `sign_` 开头、无需参数，并返回 `(bool, str)`；主程序无需修改。
@@ -236,7 +226,6 @@ python -m unittest discover -s tests -v
 - **任务成功但没收到微信消息**：检查 `PUSHPLUS_TOKEN`、PushPlus 账号绑定状态和 Actions 日志。
 - **米游社提示 Cookie 失效**：重新登录米游社并更新 Secret；保存后手动触发工作流验证。
 - **米游社提示验证码**：先在米游社 App 完成验证或手动签到，再重新运行；脚本不会绕过验证码。
-- **Aivalux 显示登录失效**：重新登录网页，从 Local Storage 更新 `AIVALUX_ACCESS_TOKEN` 和 `AIVALUX_REFRESH_TOKEN`。
 - **新增文件没有执行**：确认文件位于 `signers/`、扩展名为 `.py`，函数名以 `sign_` 开头且定义在该模块中。
 - **为什么没有失败截图**：本项目使用 HTTP API，不启动浏览器，因此保存的是详细日志 Artifact；只有 Playwright/Selenium 页面自动化才有可用的页面截图。
 - **定时任务没有精确在 09:30 开始**：GitHub Actions 的 cron 使用 UTC 且可能排队延迟。工作流中的报告时间始终按 `Asia/Shanghai` 生成。

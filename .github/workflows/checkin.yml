@@ -22,6 +22,8 @@ jobs:
       COOKIE_MIHOYO: ${{ secrets.COOKIE_MIHOYO }}
       AIVALUX_ACCESS_TOKEN: ${{ secrets.AIVALUX_ACCESS_TOKEN }}
       AIVALUX_REFRESH_TOKEN: ${{ secrets.AIVALUX_REFRESH_TOKEN }}
+      AIVALUX_EMAIL: ${{ secrets.AIVALUX_EMAIL }}
+      AIVALUX_PASSWORD: ${{ secrets.AIVALUX_PASSWORD }}
       AIVALUX_COOKIE: ${{ secrets.AIVALUX_COOKIE }}
       ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
       COOKIES_JSON: ${{ secrets.COOKIES_JSON }}

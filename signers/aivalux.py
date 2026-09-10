@@ -20,6 +20,7 @@ STATUS_URL = f"{API_BASE}/status"
 CHECKIN_URL = f"{API_BASE}/check-in"
 RED_PACKET_URL = f"{API_BASE}/red-packet/claim"
 REFRESH_URL = f"{API_BASE}/refresh"
+LOGIN_URL = "https://www.aivalux.com/api/v1/auth/login"
 
 
 class AivaluxError(RuntimeError):
@@ -35,8 +36,11 @@ class AivaluxError(RuntimeError):
 class AuthTokens:
     access_token: str
     refresh_token: str
+    email: str = ""
+    password: str = ""
     refreshed: bool = False
     refresh_token_rotated: bool = False
+    logged_in: bool = False
 
 
 def _safe_request_error(exc: requests.RequestException) -> str:
@@ -63,6 +67,8 @@ def _safe_api_message(
     secrets = [
         tokens.access_token,
         tokens.refresh_token,
+        tokens.email,
+        tokens.password,
         str(session.headers.get("Cookie") or ""),
     ]
     for secret in secrets:
@@ -112,6 +118,53 @@ def _refresh_access_token(session: requests.Session, tokens: AuthTokens) -> None
     tokens.refreshed = True
 
 
+def _login(session: requests.Session, tokens: AuthTokens) -> None:
+    """使用 GitHub Secrets 中的账号密码获取新的 Token。"""
+
+    if not tokens.email or not tokens.password:
+        raise AivaluxError("缺少可用登录凭据，请更新 Aivalux Secrets", status=401)
+    try:
+        response = session.post(
+            LOGIN_URL,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json={"email": tokens.email, "password": tokens.password},
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise AivaluxError(f"账号密码登录失败：{_safe_request_error(exc)}") from exc
+    payload = _decode_json(response)
+    data = payload.get("data")
+    if response.status_code >= 400 or payload.get("code") != 0 or not isinstance(data, dict):
+        error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+        raw_message = error.get("message") or payload.get("message") or "账号密码登录失败"
+        raise AivaluxError(
+            _safe_api_message(raw_message, session, tokens),
+            code=str(error.get("code") or "LOGIN_FAILED"),
+            status=response.status_code,
+        )
+    access_token = data.get("access_token")
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise AivaluxError("登录接口未返回 Access Token")
+    tokens.access_token = access_token.strip()
+    refresh_token = data.get("refresh_token")
+    tokens.refresh_token = refresh_token.strip() if isinstance(refresh_token, str) else ""
+    tokens.logged_in = True
+    tokens.refresh_token_rotated = False
+
+
+def _authenticate(session: requests.Session, tokens: AuthTokens) -> None:
+    """优先刷新 Token；无法刷新时才使用账号密码登录。"""
+
+    if tokens.refresh_token:
+        try:
+            _refresh_access_token(session, tokens)
+            return
+        except AivaluxError:
+            if not tokens.email or not tokens.password:
+                raise
+    _login(session, tokens)
+
+
 def _request(
     session: requests.Session,
     tokens: AuthTokens,
@@ -120,11 +173,11 @@ def _request(
     *,
     json_body: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """发送鉴权请求；遇到一次 401 时使用 Refresh Token 重试。"""
+    """发送鉴权请求；遇到一次 401 时刷新或重新登录后重试。"""
 
     for attempt in range(2):
         if not tokens.access_token:
-            _refresh_access_token(session, tokens)
+            _authenticate(session, tokens)
         headers = {"Accept": "application/json", "Authorization": f"Bearer {tokens.access_token}"}
         if json_body is not None:
             headers["Content-Type"] = "application/json"
@@ -134,9 +187,9 @@ def _request(
             )
         except requests.RequestException as exc:
             raise AivaluxError(_safe_request_error(exc)) from exc
-        if response.status_code == 401 and attempt == 0 and tokens.refresh_token:
+        if response.status_code == 401 and attempt == 0:
             tokens.access_token = ""
-            _refresh_access_token(session, tokens)
+            _authenticate(session, tokens)
             continue
         payload = _decode_json(response)
         if response.status_code >= 400 or payload.get("ok") is not True:
@@ -146,7 +199,7 @@ def _request(
             code = str(error.get("code") or "REQUEST_FAILED")
             raise AivaluxError(message, code=code, status=response.status_code)
         return payload
-    raise AivaluxError("登录状态刷新后仍然无效", status=401)
+    raise AivaluxError("重新认证后登录状态仍然无效", status=401)
 
 
 def _reward_text(data: dict[str, Any]) -> str:
@@ -195,10 +248,14 @@ def sign_aivalux() -> tuple[bool, str]:
 
     access_token = os.getenv("AIVALUX_ACCESS_TOKEN", "").strip()
     refresh_token = os.getenv("AIVALUX_REFRESH_TOKEN", "").strip()
+    email = os.getenv("AIVALUX_EMAIL", "").strip()
+    password = os.getenv("AIVALUX_PASSWORD", "").strip()
     cookie = os.getenv("AIVALUX_COOKIE", "").strip()
-    if not access_token and not refresh_token:
-        return True, "未配置 Aivalux Token，已跳过"
-    tokens = AuthTokens(access_token, refresh_token)
+    if bool(email) != bool(password):
+        return False, "AIVALUX_EMAIL 和 AIVALUX_PASSWORD 必须同时配置"
+    if not access_token and not refresh_token and not email:
+        return True, "未配置 Aivalux 凭据，已跳过"
+    tokens = AuthTokens(access_token, refresh_token, email, password)
     with requests.Session() as session:
         session.headers.update(
             {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -226,9 +283,11 @@ def sign_aivalux() -> tuple[bool, str]:
                 if not isinstance(status_data, dict):
                     raise AivaluxError("签到后状态接口 data 字段格式错误")
             red_packet_ok, red_packet_message = _red_packet_result(session, tokens, status_data)
-            refreshed_message = "；登录状态已自动刷新" if tokens.refreshed else ""
-            message = f"{checkin_message}；{red_packet_message}{refreshed_message}"
-            if tokens.refresh_token_rotated:
+            auth_message = "；已使用账号密码重新登录" if tokens.logged_in else (
+                "；登录状态已自动刷新" if tokens.refreshed else ""
+            )
+            message = f"{checkin_message}；{red_packet_message}{auth_message}"
+            if tokens.refresh_token_rotated and not (tokens.email and tokens.password):
                 message += "；Refresh Token 已轮换，请重新登录并更新 GitHub Secrets"
                 LOGGER.warning("❌ [Aivalux] %s", message)
                 return False, message
