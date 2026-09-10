@@ -9,7 +9,16 @@ import requests
 
 import main
 from signers.base import get_account_secrets, push_message
-from signers.mihoyo import _sign_account
+from signers.mihoyo import (
+    GENSHIN,
+    HONKAI_STAR_RAIL,
+    ZENLESS_ZONE_ZERO,
+    _headers,
+    _request_error,
+    _sign_game_account,
+    _sign_role,
+    sign_mihoyo,
+)
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -115,11 +124,169 @@ class MihoyoIsolationTests(unittest.TestCase):
         sign_role.side_effect = [requests.Timeout("timeout"), (True, "第二个角色成功")]
 
         account = types.SimpleNamespace(name="测试账号", value="fake-cookie")
-        results = _sign_account(account, "act-id", "hk4e_cn")
+        with patch("signers.mihoyo._pause"):
+            found, results = _sign_game_account(account, GENSHIN)
 
+        self.assertTrue(found)
         self.assertEqual(len(results), 2)
         self.assertFalse(results[0][0])
         self.assertEqual(results[1], (True, "第二个角色成功"))
+
+    @patch("signers.mihoyo._json")
+    def test_already_signed_is_success(self, parse_json: Mock) -> None:
+        parse_json.return_value = {
+            "retcode": 0,
+            "data": {"is_sign": True, "total_sign_day": 10},
+        }
+        session = Mock()
+        account = types.SimpleNamespace(name="测试账号", value="fake-cookie")
+        role = {"game_uid": "123456789", "region": "cn_gf01", "nickname": "旅行者"}
+
+        result = _sign_role(session, account, role, GENSHIN)
+
+        self.assertTrue(result[0])
+        self.assertIn("原神", result[1])
+        self.assertIn("今日已签到", result[1])
+        session.post.assert_not_called()
+
+    @patch("signers.mihoyo._json")
+    def test_captcha_response_is_failure(self, parse_json: Mock) -> None:
+        parse_json.side_effect = [
+            {"retcode": 0, "data": {"is_sign": False, "total_sign_day": 0}},
+            {"retcode": 0, "data": {"success": 1, "gt": "masked"}},
+        ]
+        session = Mock()
+        account = types.SimpleNamespace(name="测试账号", value="fake-cookie")
+        role = {"game_uid": "123456789", "region": "cn_gf01", "nickname": "旅行者"}
+
+        with patch("signers.mihoyo._pause"):
+            result = _sign_role(session, account, role, GENSHIN)
+
+        self.assertFalse(result[0])
+        self.assertIn("验证码", result[1])
+
+    @patch("signers.mihoyo._sign_game_account")
+    @patch("signers.mihoyo.get_account_secrets")
+    def test_all_supported_games_are_auto_detected(
+        self, get_secrets: Mock, sign_game: Mock
+    ) -> None:
+        get_secrets.return_value = [types.SimpleNamespace(name="默认账号", value="fake-cookie")]
+        sign_game.side_effect = [
+            (True, [(True, "原神已签到")]),
+            (True, [(True, "星铁已签到")]),
+            (True, [(True, "绝区零已签到")]),
+        ]
+
+        with patch("signers.mihoyo._pause"):
+            success, message = sign_mihoyo()
+
+        self.assertTrue(success)
+        self.assertEqual(
+            [call.args[1] for call in sign_game.call_args_list],
+            [GENSHIN, HONKAI_STAR_RAIL, ZENLESS_ZONE_ZERO],
+        )
+        self.assertIn("原神已签到", message)
+        self.assertIn("星铁已签到", message)
+        self.assertIn("绝区零已签到", message)
+
+
+class MihoyoContractTests(unittest.TestCase):
+    def test_current_game_api_contracts(self) -> None:
+        self.assertEqual(
+            (
+                GENSHIN.game_biz,
+                GENSHIN.act_id,
+                GENSHIN.info_url,
+                GENSHIN.sign_url,
+                GENSHIN.signgame,
+            ),
+            (
+                "hk4e_cn",
+                "e202311201442471",
+                "https://api-takumi.mihoyo.com/event/luna/info?lang=zh-cn",
+                "https://api-takumi.mihoyo.com/event/luna/sign",
+                "hk4e",
+            ),
+        )
+        self.assertEqual(
+            (
+                HONKAI_STAR_RAIL.game_biz,
+                HONKAI_STAR_RAIL.act_id,
+                HONKAI_STAR_RAIL.info_url,
+            ),
+            (
+                "hkrpg_cn",
+                "e202304121516551",
+                "https://api-takumi.mihoyo.com/event/luna/info?lang=zh-cn",
+            ),
+        )
+        self.assertEqual(
+            (
+                ZENLESS_ZONE_ZERO.game_biz,
+                ZENLESS_ZONE_ZERO.act_id,
+                ZENLESS_ZONE_ZERO.info_url,
+                ZENLESS_ZONE_ZERO.sign_url,
+                ZENLESS_ZONE_ZERO.signgame,
+            ),
+            (
+                "nap_cn",
+                "e202406242138391",
+                "https://act-nap-api.mihoyo.com/event/luna/zzz/info?lang=zh-cn",
+                "https://act-nap-api.mihoyo.com/event/luna/zzz/sign",
+                "zzz",
+            ),
+        )
+
+    @patch("signers.mihoyo._make_ds", side_effect=["ds-one", "ds-two"])
+    def test_headers_use_fresh_ds_and_stable_device(self, make_ds: Mock) -> None:
+        first = _headers("fake-cookie", GENSHIN)
+        second = _headers("fake-cookie", GENSHIN)
+
+        self.assertEqual(first["DS"], "ds-one")
+        self.assertEqual(second["DS"], "ds-two")
+        self.assertEqual(first["x-rpc-device_id"], second["x-rpc-device_id"])
+        self.assertEqual(first["x-rpc-signgame"], "hk4e")
+        self.assertEqual(make_ds.call_count, 2)
+
+    def test_request_error_never_echoes_cookie(self) -> None:
+        detail = _request_error(requests.exceptions.InvalidHeader("invalid secret-cookie-value"))
+        self.assertNotIn("secret-cookie-value", detail)
+        self.assertIn("InvalidHeader", detail)
+
+    @patch("signers.mihoyo._json")
+    @patch("signers.mihoyo.requests.Session")
+    def test_unbound_game_is_skipped(self, session_factory: Mock, parse_json: Mock) -> None:
+        session_factory.return_value.__enter__.return_value = Mock()
+        parse_json.return_value = {"retcode": 0, "data": {"list": []}}
+
+        found, results = _sign_game_account(
+            types.SimpleNamespace(name="默认账号", value="fake-cookie"),
+            HONKAI_STAR_RAIL,
+        )
+
+        self.assertFalse(found)
+        self.assertEqual(results, [])
+
+    @patch("signers.mihoyo._sign_game_account")
+    @patch("signers.mihoyo.get_account_secrets")
+    def test_partial_query_failure_is_aggregated(
+        self, get_secrets: Mock, sign_game: Mock
+    ) -> None:
+        get_secrets.return_value = [
+            types.SimpleNamespace(name="默认账号", value="fake-cookie")
+        ]
+        sign_game.side_effect = [
+            ValueError("角色查询失败"),
+            (False, []),
+            (True, [(True, "绝区零今日已签到")]),
+        ]
+
+        with patch("signers.mihoyo._pause"):
+            success, message = sign_mihoyo()
+
+        self.assertFalse(success)
+        self.assertIn("原神", message)
+        self.assertIn("绝区零今日已签到", message)
 
 
 if __name__ == "__main__":

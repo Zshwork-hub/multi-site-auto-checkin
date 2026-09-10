@@ -9,10 +9,11 @@
 ## 功能
 
 - 自动发现 `signers/` 中所有以 `sign_` 开头的签到函数
+- 自动识别米游社账号绑定的原神、崩坏：星穹铁道和绝区零角色
 - 单个网站失败不会阻断其他网站
 - Cookie、Token 等敏感信息只从环境变量或 GitHub Secrets 读取
 - 支持直接 Secret、`COOKIES_JSON`、`ACCOUNTS_JSON` 三种账号配置
-- 站点之间默认随机等待 2–8 秒，可通过环境变量微调
+- 站点之间默认随机等待 2–8 秒；米游社游戏和角色之间等待 1–3 秒
 - PushPlus Markdown 汇总推送
 - 失败时将 UTF-8 日志上传为 GitHub Actions Artifact，保留 7 天
 - 可在本地和 GitHub Actions 运行
@@ -26,7 +27,7 @@
 ├── signers/
 │   ├── __init__.py
 │   ├── base.py                    # 日志、账号配置、PushPlus 等公共工具
-│   └── mihoyo.py                  # 米游社原神国服签到示例
+│   └── mihoyo.py                  # 米游社原神、星铁、绝区零国服签到
 ├── tests/test_main.py             # 不访问网络的基础测试
 ├── requirements.txt               # 锁定依赖版本
 └── README.md
@@ -51,11 +52,9 @@ Fork 本仓库，或将这些文件提交到你自己的 GitHub 仓库。请勿�
 | Secret 名称 | 用途 | 是否必填 |
 | --- | --- | --- |
 | `PUSHPLUS_TOKEN` | PushPlus Token | 是 |
-| `COOKIE_MIHOYO` | 单个米游社账号 Cookie | 米游社示例必填；使用 JSON 配置时可不填 |
+| `COOKIE_MIHOYO` | 单个米游社账号 Cookie；自动识别原神、星铁和绝区零 | 米游社签到必填；使用 JSON 配置时可不填 |
 | `COOKIES_JSON` | 按网站批量配置 Cookie | 可选 |
 | `ACCOUNTS_JSON` | 带账号名称的进阶配置 | 可选 |
-| `MIHOYO_ACT_ID` | 米游社活动 ID | 可选，默认使用原神国服签到活动 |
-| `MIHOYO_GAME_BIZ` | 米游社游戏标识 | 可选，默认 `hk4e_cn` |
 
 Cookie 可在登录目标网站后通过浏览器开发者工具的 Network 请求头获得。Cookie 通常会过期，出现登录失效或 `-100` 等错误时需要重新获取。不要在 Issue、日志、截图或聊天中公开 Cookie。
 
@@ -145,7 +144,7 @@ python main.py
 
 ## 米游社示例说明
 
-`signers/mihoyo.py` 当前演示原神国服角色签到：先使用 Cookie 查询绑定角色，再查询当日状态并签到；同一米游社账号下的多个原神角色会逐个处理。接口返回“已经签到”时按成功处理。示例包含国服接口常见的动态 DS 和设备标识请求头；这些客户端参数仍可能随米游社更新而失效。
+`signers/mihoyo.py` 会使用同一个 Cookie 分别查询原神、崩坏：星穹铁道和绝区零国服角色，只签到实际绑定的游戏与角色，未绑定的游戏自动跳过。同一游戏存在多个角色时会逐个处理；接口返回“今日已签到”时按成功处理，不会重复签到。实现使用当前 Luna 接口、动态 DS、稳定设备标识和各游戏独立活动 ID；这些公开接口参数仍可能随米游社更新而失效。
 
 米游社接口和风控策略可能变化。如果返回验证码、风控或接口不兼容提示，脚本不会尝试绕过验证；请先在官方客户端完成必要验证，再更新 Cookie 或接口配置。
 
@@ -203,11 +202,13 @@ COOKIE_EXAMPLE: ${{ secrets.COOKIE_EXAMPLE }}
 
 ## 调整随机延时
 
-工作流默认只在不同网站之间随机等待 2–8 秒。可编辑工作流中的：
+工作流在不同网站之间随机等待 2–8 秒，并在连续的米游社游戏或角色请求之间等待 1–3 秒。可编辑工作流中的：
 
 ```yaml
 CHECKIN_MIN_DELAY: "2"
 CHECKIN_MAX_DELAY: "8"
+MIHOYO_MIN_DELAY: "1"
+MIHOYO_MAX_DELAY: "3"
 ```
 
 这不是规避风控的保证。请保持低频访问，并遵守网站规则。
@@ -223,7 +224,8 @@ python -m unittest discover -s tests -v
 ## 常见问题
 
 - **任务成功但没收到微信消息**：检查 `PUSHPLUS_TOKEN`、PushPlus 账号绑定状态和 Actions 日志。
-- **米游社提示 Cookie 失效**：重新登录米游社网页并更新 Secret；保存后手动触发工作流验证。
+- **米游社提示 Cookie 失效**：重新登录米游社并更新 Secret；保存后手动触发工作流验证。
+- **米游社提示验证码**：先在米游社 App 完成验证或手动签到，再重新运行；脚本不会绕过验证码。
 - **新增文件没有执行**：确认文件位于 `signers/`、扩展名为 `.py`，函数名以 `sign_` 开头且定义在该模块中。
 - **为什么没有失败截图**：本项目使用 HTTP API，不启动浏览器，因此保存的是详细日志 Artifact；只有 Playwright/Selenium 页面自动化才有可用的页面截图。
 - **定时任务没有精确在 09:30 开始**：GitHub Actions 的 cron 使用 UTC 且可能排队延迟。工作流中的报告时间始终按 `Asia/Shanghai` 生成。
