@@ -21,6 +21,9 @@ CHECKIN_URL = f"{API_BASE}/check-in"
 RED_PACKET_URL = f"{API_BASE}/red-packet/claim"
 REFRESH_URL = f"{API_BASE}/refresh"
 LOGIN_URL = "https://www.aivalux.com/api/v1/auth/login"
+SITE_ORIGIN = "https://www.aivalux.com"
+CHECKIN_PAGE_URL = f"{SITE_ORIGIN}/qiandao/"
+LOGIN_REFERER = f"{SITE_ORIGIN}/login"
 
 
 class AivaluxError(RuntimeError):
@@ -260,7 +263,10 @@ def sign_aivalux() -> tuple[bool, str]:
     with requests.Session() as session:
         session.headers.update(
             {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"}
+             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+             "Origin": SITE_ORIGIN,
+             "Referer": CHECKIN_PAGE_URL,
+            }
         )
         if cookie:
             session.headers["Cookie"] = cookie
