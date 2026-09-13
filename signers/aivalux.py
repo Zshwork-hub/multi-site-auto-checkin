@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -24,6 +27,7 @@ LOGIN_URL = "https://www.aivalux.com/api/v1/auth/login"
 SITE_ORIGIN = "https://www.aivalux.com"
 CHECKIN_PAGE_URL = f"{SITE_ORIGIN}/qiandao/"
 LOGIN_REFERER = f"{SITE_ORIGIN}/login"
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class AivaluxError(RuntimeError):
@@ -230,6 +234,20 @@ def _red_packet_result(
     if red_packet.get("claimed"):
         return True, "今日红包已领取"
     if red_packet.get("can_claim") is not True:
+        # GitHub Actions 可能在 09:30 前启动；签到完成后等待红包窗口开放。
+        wait_enabled = os.getenv("AIVALUX_WAIT_FOR_RED_PACKET", "").strip().lower() in {
+            "1", "true", "yes"
+        }
+        now = datetime.now(SHANGHAI_TZ)
+        opening = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        if wait_enabled and red_packet.get("phase") == "closed" and now < opening:
+            seconds = max(1, int((opening - now).total_seconds()))
+            LOGGER.info("[Aivalux] 红包尚未开放，将等待至北京时间 09:30（约 %d 秒）", seconds)
+            time.sleep(seconds)
+            refreshed = _request(session, tokens, "GET", STATUS_URL)
+            refreshed_data = refreshed.get("data")
+            if isinstance(refreshed_data, dict):
+                return _red_packet_result(session, tokens, refreshed_data)
         phase = safe_message(red_packet.get("phase") or "当前不可领取", limit=50)
         return True, f"红包不可领取（{phase}），已跳过"
     try:

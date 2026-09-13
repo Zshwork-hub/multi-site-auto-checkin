@@ -16,7 +16,7 @@ concurrency:
 jobs:
   checkin:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 360
     env:
       PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
       COOKIE_MIHOYO: ${{ secrets.COOKIE_MIHOYO }}
@@ -32,6 +32,7 @@ jobs:
       CHECKIN_MAX_DELAY: "8"
       MIHOYO_MIN_DELAY: "1"
       MIHOYO_MAX_DELAY: "3"
+      AIVALUX_WAIT_FOR_RED_PACKET: "true"
 
     steps:
       - name: Checkout repository
