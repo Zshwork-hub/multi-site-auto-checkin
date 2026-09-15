@@ -1,6 +1,6 @@
 """米游社国服游戏签到。
 
-自动识别同一米游社 Cookie 下绑定的原神、崩坏：星穹铁道和绝区零角色。
+自动识别同一米游社 Cookie 下绑定的米哈游国服游戏角色，并逐个签到。
 Cookie 通常会过期，请定期更新 GitHub Secret ``COOKIE_MIHOYO``。
 本模块不会在日志或推送中输出 Cookie 原文或完整 UID。
 """
@@ -101,7 +101,39 @@ ZENLESS_ZONE_ZERO = GameConfig(
     api_path="/event/luna/zzz",
     signgame="zzz",
 )
-SUPPORTED_GAMES = (GENSHIN, HONKAI_STAR_RAIL, ZENLESS_ZONE_ZERO)
+HONKAI_IMPACT_2 = GameConfig(
+    name="崩坏学园 2",
+    game_biz="bh2_cn",
+    act_id="e202203291431091",
+    api_base="https://api-takumi.mihoyo.com",
+    api_path="/event/luna",
+)
+HONKAI_IMPACT_3 = GameConfig(
+    name="崩坏 3",
+    game_biz="bh3_cn",
+    act_id="e202306201626331",
+    api_base="https://api-takumi.mihoyo.com",
+    api_path="/event/luna",
+)
+TEARS_OF_THEMIS = GameConfig(
+    name="未定事件簿",
+    game_biz="nxx_cn",
+    act_id="e202202251749321",
+    api_base="https://api-takumi.mihoyo.com",
+    api_path="/event/luna",
+)
+SUPPORTED_GAMES = (
+    GENSHIN,
+    HONKAI_STAR_RAIL,
+    ZENLESS_ZONE_ZERO,
+    HONKAI_IMPACT_2,
+    HONKAI_IMPACT_3,
+    TEARS_OF_THEMIS,
+)
+REGION_NAMES = {
+    "cn_gf01": "天空岛",
+    "cn_qd01": "世界树",
+}
 
 
 def _make_ds() -> str:
@@ -157,7 +189,8 @@ def _api_error(data: dict[str, Any]) -> str:
 
 
 def _masked_label(account: AccountSecret, role: dict[str, Any], game: GameConfig) -> str:
-    region = safe_message(role.get("region", ""), limit=50)
+    region_code = safe_message(role.get("region", ""), limit=50)
+    region = REGION_NAMES.get(region_code, region_code)
     uid = str(role.get("game_uid", ""))
     nickname = safe_message(role.get("nickname") or "未命名角色", limit=50)
     account_name = safe_message(account.name, limit=50)
@@ -311,7 +344,7 @@ def _sign_game_account(
 def sign_mihoyo() -> tuple[bool, str]:
     """
     网站名称：米游社
-    签到说明：自动识别并签到原神、崩坏：星穹铁道和绝区零国服角色。
+    签到说明：自动识别并签到米游社 Cookie 下已绑定的国服游戏角色。
     """
 
     accounts = get_account_secrets("mihoyo", "COOKIE_MIHOYO")
@@ -347,7 +380,7 @@ def sign_mihoyo() -> tuple[bool, str]:
             results.append(
                 (
                     False,
-                    f"{safe_message(account.name)}: 未找到原神、崩坏：星穹铁道或绝区零角色",
+                    f"{safe_message(account.name)}: 未找到可签到的米哈游游戏角色",
                 )
             )
 

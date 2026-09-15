@@ -13,6 +13,9 @@ from signers.mihoyo import (
     GENSHIN,
     HONKAI_STAR_RAIL,
     ZENLESS_ZONE_ZERO,
+    HONKAI_IMPACT_2,
+    HONKAI_IMPACT_3,
+    TEARS_OF_THEMIS,
     _headers,
     _request_error,
     _sign_game_account,
@@ -176,6 +179,9 @@ class MihoyoIsolationTests(unittest.TestCase):
             (True, [(True, "原神已签到")]),
             (True, [(True, "星铁已签到")]),
             (True, [(True, "绝区零已签到")]),
+            (False, []),
+            (False, []),
+            (False, []),
         ]
 
         with patch("signers.mihoyo._pause"):
@@ -184,7 +190,10 @@ class MihoyoIsolationTests(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(
             [call.args[1] for call in sign_game.call_args_list],
-            [GENSHIN, HONKAI_STAR_RAIL, ZENLESS_ZONE_ZERO],
+            [
+                GENSHIN, HONKAI_STAR_RAIL, ZENLESS_ZONE_ZERO,
+                HONKAI_IMPACT_2, HONKAI_IMPACT_3, TEARS_OF_THEMIS,
+            ],
         )
         self.assertIn("原神已签到", message)
         self.assertIn("星铁已签到", message)
@@ -280,6 +289,9 @@ class MihoyoContractTests(unittest.TestCase):
             ValueError("角色查询失败"),
             (False, []),
             (True, [(True, "绝区零今日已签到")]),
+            (False, []),
+            (False, []),
+            (False, []),
         ]
 
         with patch("signers.mihoyo._pause"):
