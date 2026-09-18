@@ -2,8 +2,8 @@ name: Daily multi-site check-in
 
 on:
   schedule:
-    # GitHub Actions 使用 UTC；23:00 UTC（前一天）= 北京时间 07:00。
-    - cron: "0 23 * * *"
+    # GitHub Actions 使用 UTC；23:15 UTC（前一天）= 北京时间 07:15。
+    - cron: "15 23 * * *"
   workflow_dispatch:
 
 permissions:
